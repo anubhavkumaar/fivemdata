@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FiveM Server Dashboard</title>
+  <style>
+    body { background: #0d1117; color: #c9d1d9; font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+    h1 { text-align: center; color: #58a6ff; }
+    .server-info, .controls, .players, .alerts { margin-top: 30px; text-align: center; }
+    .player {
+      background: #161b22;
+      margin: 10px;
+      padding: 15px;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(88, 166, 255, 0.2);
+      transition: transform 0.2s;
+    }
+    .player:hover { transform: scale(1.02); }
+    .error { color: red; text-align: center; margin-top: 20px; }
+    input, select, button { padding: 10px 15px; margin: 5px; border: none; border-radius: 8px; }
+    input[type="text"] { width: 280px; }
+    select { background: #21262d; color: #c9d1d9; }
+    button { background: #238636; color: white; cursor: pointer; }
+    button:hover { background: #2ea043; }
+    #playerList { max-height: 600px; overflow-y: auto; margin-top: 20px; }
+    .alert-name { background: #21262d; padding: 5px 10px; margin: 5px; border-radius: 8px; display: inline-block; }
+    .remove-alert { margin-left: 8px; cursor: pointer; color: #f85149; }
+    .remove-alert:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <h1>🚓 FiveM Server Dashboard</h1>
+
+  <div class="server-info" id="serverInfo">Loading server info...</div>
+
+  <div class="controls">
+    <input type="text" id="searchInput" placeholder="Search players..." oninput="renderPlayers()">
+    <input type="text" id="alertNameInput" placeholder="Type player name...">
+    <button onclick="addAlertName()">Add Alert</button>
+    <br>
+    <select onchange="setSortOrder(this.value)">
+      <option value="nameAsc">Sort Name A-Z</option>
+      <option value="nameDesc">Sort Name Z-A</option>
+      <option value="idAsc">Sort ID ↑</option>
+      <option value="idDesc">Sort ID ↓</option>
+    </select>
+  </div>
+
+  <div class="alerts" id="alertList"></div>
+
+  <div class="players" id="playerList"></div>
+  <div class="error" id="error"></div>
+
+  <script>
+    const joinUrl = "https://cfx.re/join/5m43x6";
+    let players = [];
+    let sortOrder = 'nameAsc';
+    let alertNames = JSON.parse(localStorage.getItem('alertNames') || '[]');
+    let firstLoad = true; // important
+
+    function cleanServerName(name) {
+      return name.replace(/\^\d/g, '');
+    }
+
+    function saveAlerts() {
+      localStorage.setItem('alertNames', JSON.stringify(alertNames));
+      renderAlertList();
+    }
+
+    function addAlertName() {
+      const name = document.getElementById('alertNameInput').value.trim();
+      if (name && !alertNames.includes(name.toLowerCase())) {
+        alertNames.push(name.toLowerCase());
+        saveAlerts();
+      }
+      document.getElementById('alertNameInput').value = '';
+    }
+
+    function removeAlertName(name) {
+      alertNames = alertNames.filter(n => n !== name);
+      saveAlerts();
+    }
+
+    function renderAlertList() {
+      const alertListDiv = document.getElementById('alertList');
+      if (alertNames.length === 0) {
+        alertListDiv.innerHTML = "<p>No alert names set.</p>";
+        return;
+      }
+      alertListDiv.innerHTML = alertNames.map(name => `
+        <span class="alert-name">${name}
+          <span class="remove-alert" onclick="removeAlertName('${name}')">✖️</span>
+        </span>
+      `).join(' ');
+    }
+
+    async function fetchServerData() {
+      try {
+        const serverCode = joinUrl.split("/").pop();
+        const response = await fetch(`https://servers-frontend.fivem.net/api/servers/single/${serverCode}`);
+        if (!response.ok) throw new Error("Invalid server code or server unreachable");
+
+        const data = await response.json();
+        const server = data.Data;
+
+        document.getElementById('serverInfo').innerHTML = `
+          <h2>${cleanServerName(server.hostname) || "Unknown Server"}</h2>
+          <p>🔌 IP Address: ${server.connectEndPoints[0] || "N/A"}</p>
+          <p>👥 Players: ${server.clients} / ${server.sv_maxclients}</p>
+        `;
+
+        players = server.players || [];
+        renderPlayers();
+
+      } catch (error) {
+        console.error(error);
+        document.getElementById('serverInfo').innerHTML = "";
+        document.getElementById('playerList').innerHTML = "";
+        document.getElementById('error').innerText = "Error fetching server info. Please check the server link.";
+      }
+    }
+
+    function setSortOrder(order) {
+      sortOrder = order;
+      renderPlayers();
+    }
+
+    function renderPlayers() {
+      const playerListDiv = document.getElementById('playerList');
+      const searchText = document.getElementById('searchInput').value.toLowerCase();
+
+      let filteredPlayers = players.filter(player => player.name?.toLowerCase().includes(searchText));
+
+      if (sortOrder === 'nameAsc') {
+        filteredPlayers.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      } else if (sortOrder === 'nameDesc') {
+        filteredPlayers.sort((a, b) => (b.name || "").localeCompare(a.name || ""));
+      } else if (sortOrder === 'idAsc') {
+        filteredPlayers.sort((a, b) => (a.id || 0) - (b.id || 0));
+      } else if (sortOrder === 'idDesc') {
+        filteredPlayers.sort((a, b) => (b.id || 0) - (a.id || 0));
+      }
+
+      if (firstLoad) {
+        for (const player of filteredPlayers) {
+          const name = player.name || "";
+          if (alertNames.includes(name.toLowerCase())) {
+            alert(`🚨 Player "${name}" is online!`);
+          }
+        }
+        firstLoad = false;
+      }
+
+      playerListDiv.innerHTML = filteredPlayers.map(player => {
+        const name = player.name || "Unknown";
+        const serverId = player.id !== undefined ? player.id : "N/A";
+        let discordId = "N/A";
+        let steamId = "N/A";
+
+        if (player.identifiers && Array.isArray(player.identifiers)) {
+          const discordIdentifier = player.identifiers.find(id => id.startsWith("discord:"));
+          if (discordIdentifier) {
+            discordId = discordIdentifier.split(":")[1];
+          }
+          const steamIdentifier = player.identifiers.find(id => id.startsWith("steam:"));
+          if (steamIdentifier) {
+            steamId = steamIdentifier.split(":")[1];
+          }
+        }
+
+        return `<div class="player">
+          👤 <strong>Name (CFX)</strong>: ${name}<br>
+          🆔 <strong>Server ID</strong>: ${serverId}<br>
+          🎮 <strong>Steam ID</strong>: ${steamId}<br>
+          💬 <strong>Discord ID</strong>: ${discordId !== "N/A" ? `<a href="https://discord.com/users/${discordId}" target="_blank">${discordId}</a>` : "N/A"}
+        </div>`;
+      }).join('');
+    }
+
+    fetchServerData();
+    setInterval(fetchServerData, 10000);
+    renderAlertList();
+  </script>
+
+</body>
+</html>
